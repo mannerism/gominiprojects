@@ -2,49 +2,57 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net/http"
+	"os"
+	"time"
 )
 
 type requestResult struct {
-	url    string
-	status string
+	exchange string
+	price    float64
 }
 
 func main() {
-	results := make(map[string]string)
+	doEvery(10*time.Second, startTicker)
+}
 
-	c := make(chan requestResult)
-
-	urls := []string{
-		"https://www.airbnb.com",
-		"https://www.google.com",
-		"https://www.amazon.com",
-		"https://www.reddit.com",
-		"https://www.facebook.com",
-		"https://soundcloud.com",
-		"https://academy.nomadcoders.co/",
-	}
-
-	for _, url := range urls {
-		go hitURL(url, c)
-	}
-
-	for i := 0; i < len(urls); i++ {
-		result := <-c
-		results[result.url] = result.status
-	}
-
-	for url, status := range results {
-		fmt.Println(url, status)
+func doEvery(d time.Duration, f func()) {
+	for _ = range time.Tick(d) {
+		f()
 	}
 }
 
-func hitURL(url string, c chan requestResult) {
-	res, err := http.Get(url)
-	status := "OK"
-	if err != nil || res.StatusCode >= 400 {
-		status = "FAILED"
-	} else {
-		c <- requestResult{url: url, status: status}
+func startTicker() {
+	results := make(map[string]float64)
+
+	exchanges := []string{
+		"upbit",
+		"huobikr",
 	}
+
+	c := make(chan requestResult)
+
+	go upbitETHPrice(c)
+	go huobiETHPrice(c)
+
+	for i := 0; i < len(exchanges); i++ {
+		result := <-c
+		results[result.exchange] = result.price
+	}
+	priceChecker(results)
+
+}
+
+func GetData(url string) ([]byte, error) {
+	response, err := http.Get(url)
+
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+
+	responseData, err2 := ioutil.ReadAll(response.Body)
+
+	return responseData, err2
 }
