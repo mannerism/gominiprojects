@@ -133,7 +133,6 @@ func priceChecker(val map[string]requestResult) {
 		go sendTextToTelegramChat(303250131, result.messageString)
 	} else {
 		fmt.Println("it's okay to chill")
-		go sendTextToTelegramChat(1967491369, "test")
 	}
 }
 
