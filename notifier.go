@@ -6,11 +6,14 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
+
+	"github.com/mannerism/gominiprojects/util"
 )
 
-//https://medium.com/swlh/build-a-telegram-bot-in-go-in-9-minutes-e06ad38acef1
+// https://medium.com/swlh/build-a-telegram-bot-in-go-in-9-minutes-e06ad38acef1
+// https://www.educative.io/edpresso/how-to-make-a-bitcoin-telegram-bot-in-golang#hosting-it
+
 type Update struct {
 	UpdateId int     `json:"update_id"`
 	Message  Message `json:"message"`
@@ -41,17 +44,29 @@ func processUserInput(w http.ResponseWriter, r *http.Request) {
 		log.Printf("error parsing update, %s", err.Error())
 		return
 	}
+	var telegramResponseBody, errTelegram = sendTextToTelegramChat(update.Message.Chat.Id, "test")
+	if errTelegram != nil {
+		log.Printf("got error %s from telegram, response body is %s", errTelegram.Error(), telegramResponseBody)
+	} else {
+		log.Printf("message %s is successfully sent to chat id %d", "test", update.Message.Chat.Id)
+	}
 
 }
 
 func sendTextToTelegramChat(chatId int, text string) (string, error) {
 	log.Printf("Sending %s to chat_id: %d", text, chatId)
-	var telegramApi string = "https://api.telegram.org/bot" + os.Getenv("TELEGRAM_BOT_TOKEN") + "/sendMessage"
+
+	config, err := util.LoadConfig(".")
+	if err != nil {
+		log.Fatal("cannot load config:", err)
+	}
+
+	var telegramApi string = "https://api.telegram.org/bot" + config.TeleKey + "/sendMessage"
 	response, err := http.PostForm(
 		telegramApi,
 		url.Values{
-			"chatId": {strconv.Itoa(chatId)},
-			"text":   {text},
+			"chat_id": {strconv.Itoa(chatId)},
+			"text":    {text},
 		})
 
 	if err != nil {

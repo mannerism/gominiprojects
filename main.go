@@ -9,22 +9,26 @@ import (
 )
 
 type requestResult struct {
-	exchange string
-	price    float64
+	exchange   string
+	tradePrice float64
+	askPrice   float64
+	askVolume  float64
+	bidPrice   float64
+	bidVolume  float64
 }
 
 func main() {
-	doEvery(10*time.Second, startTicker)
+	doEvery(5*time.Second, startTicker)
 }
 
 func doEvery(d time.Duration, f func()) {
-	for _ = range time.Tick(d) {
+	for range time.Tick(d) {
 		f()
 	}
 }
 
 func startTicker() {
-	results := make(map[string]float64)
+	results := make(map[string]requestResult)
 
 	exchanges := []string{
 		"upbit",
@@ -38,7 +42,7 @@ func startTicker() {
 
 	for i := 0; i < len(exchanges); i++ {
 		result := <-c
-		results[result.exchange] = result.price
+		results[result.exchange] = result
 	}
 	priceChecker(results)
 
@@ -53,6 +57,6 @@ func GetData(url string) ([]byte, error) {
 	}
 
 	responseData, err2 := ioutil.ReadAll(response.Body)
-
+	response.Body.Close()
 	return responseData, err2
 }

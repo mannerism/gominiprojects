@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/leekchan/accounting"
 )
@@ -38,22 +40,22 @@ type UpbitResponse []struct {
 }
 
 type HuobiResponse struct {
+	Ch     string `json:"ch"`
 	Status string `json:"status"`
 	Ts     int64  `json:"ts"`
-	Data   []struct {
-		Symbol  string  `json:"symbol"`
-		Open    float64 `json:"open"`
-		High    float64 `json:"high"`
-		Low     float64 `json:"low"`
-		Close   float64 `json:"close"`
-		Amount  float64 `json:"amount"`
-		Vol     float64 `json:"vol"`
-		Count   int     `json:"count"`
-		Bid     float64 `json:"bid"`
-		BidSize float64 `json:"bidSize"`
-		Ask     float64 `json:"ask"`
-		AskSize float64 `json:"askSize"`
-	} `json:"data"`
+	Tick   struct {
+		ID      int64     `json:"id"`
+		Version int64     `json:"version"`
+		Open    float64   `json:"open"`
+		Close   float64   `json:"close"`
+		Low     float64   `json:"low"`
+		High    float64   `json:"high"`
+		Amount  float64   `json:"amount"`
+		Vol     float64   `json:"vol"`
+		Count   int       `json:"count"`
+		Bid     []float64 `json:"bid"`
+		Ask     []float64 `json:"ask"`
+	} `json:"tick"`
 }
 
 func upbitETHPrice(c chan requestResult) {
@@ -61,6 +63,7 @@ func upbitETHPrice(c chan requestResult) {
 
 	if err != nil {
 		fmt.Println(err.Error())
+		fmt.Println("Error in upbitethprice")
 	}
 
 	var decoded UpbitResponse
@@ -68,42 +71,131 @@ func upbitETHPrice(c chan requestResult) {
 	json.Unmarshal(response, &decoded)
 	tradePrice := decoded[0].TradePrice
 
-	c <- requestResult{exchange: "upbit", price: tradePrice}
+	c <- requestResult{
+		exchange:   "upbit",
+		tradePrice: tradePrice,
+		askPrice:   tradePrice,
+		askVolume:  0,
+		bidPrice:   tradePrice,
+		bidVolume:  0,
+	}
 }
 
 func huobiETHPrice(c chan requestResult) {
-	response, err := GetData("https://api-cloud.huobi.co.kr/market/tickers/")
+	response, err := GetData("https://api-cloud.huobi.co.kr/market/detail/merged?symbol=ethkrw")
 	if err != nil {
 		fmt.Println(err.Error())
+		fmt.Println("Error in huobiethprice")
 	}
 
 	var decoded HuobiResponse
-	var tradePrice float64
-
 	json.Unmarshal(response, &decoded)
-	for _, single := range decoded.Data {
-		if single.Symbol == "ethkrw" {
-			tradePrice = single.Close
-		}
+
+	c <- requestResult{
+		exchange:   "huobikr",
+		tradePrice: decoded.Tick.Close,
+		askPrice:   decoded.Tick.Ask[0],
+		askVolume:  decoded.Tick.Ask[1],
+		bidPrice:   decoded.Tick.Bid[0],
+		bidVolume:  decoded.Tick.Bid[1],
 	}
-	c <- requestResult{exchange: "huobikr", price: tradePrice}
 }
 
-func priceChecker(val map[string]float64) {
+type Comparison struct {
+	actualPercent   float64
+	absolutePercent float64
+	absoluteAmount  float64
+}
+
+type TickerMessage struct {
+	messageString string
+	shouldSend    bool
+}
+
+func priceChecker(val map[string]requestResult) {
 	upbit := val["upbit"]
 	huobi := val["huobikr"]
-	percentDiff := (upbit - huobi) / upbit * 100
-	abs := math.Abs(percentDiff)
-	absdiff := math.Abs(upbit - huobi)
-	ac := accounting.Accounting{Symbol: "₩", Precision: 0}
-	fmt.Println("upbit eth price: ", ac.FormatMoney(upbit))
-	fmt.Println("huobi eth price: ", ac.FormatMoney(huobi))
-	fmt.Println("diff: ", ac.FormatMoney(absdiff))
-	fmt.Println(math.Round(abs*100)/100, "%")
+	diff := getDiffPercent(upbit, huobi)
+	var result TickerMessage
 
-	if abs > 0.5 {
-		fmt.Println("bro, you gotta check this shit")
+	if diff.actualPercent < 0 {
+		// huobi sell, upbit buy
+		result = generateTickerMessage(0, upbit, huobi, diff)
+	} else {
+		// upbit sell, huobi buy
+		result = generateTickerMessage(1, upbit, huobi, diff)
+	}
+
+	fmt.Println(result.messageString)
+
+	if result.shouldSend {
+		go sendTextToTelegramChat(1967491369, result.messageString)
+		go sendTextToTelegramChat(303250131, result.messageString)
 	} else {
 		fmt.Println("it's okay to chill")
+		go sendTextToTelegramChat(1967491369, "sex")
+	}
+}
+
+func getDiffPercent(upbit requestResult, huobi requestResult) Comparison {
+	percentDiff := (upbit.tradePrice - huobi.tradePrice) / upbit.tradePrice * 100
+	absPercent := math.Abs(percentDiff)
+	absAmount := math.Abs(upbit.tradePrice - huobi.tradePrice)
+
+	return Comparison{
+		actualPercent:   percentDiff,
+		absolutePercent: absPercent,
+		absoluteAmount:  absAmount,
+	}
+}
+
+func generateTickerMessage(
+	direction int,
+	upbit requestResult,
+	huobi requestResult,
+	diff Comparison) TickerMessage {
+
+	var b bytes.Buffer
+	var shouldSend bool
+	ac := accounting.Accounting{Symbol: "₩", Precision: 0}
+	timeStamp := time.Now()
+	upbitPriceString := "upbit eth price: " + ac.FormatMoney(upbit.tradePrice) + "\n"
+	huobiPriceString := "huobi eth price: " + ac.FormatMoney(huobi.tradePrice) + "\n"
+	priceDiffString := "diff: " + ac.FormatMoney(diff.absoluteAmount) + "\n"
+	percentDiffString := fmt.Sprintf("%f", math.Round(diff.absolutePercent*100)/100) + "%" + "\n"
+
+	// start wrting in bytes
+	b.WriteString("\n----------------------------------\n")
+	b.WriteString(timeStamp.String() + "\n\n")
+	b.WriteString(upbitPriceString)
+	b.WriteString(huobiPriceString)
+	b.WriteString(priceDiffString)
+	b.WriteString(percentDiffString)
+
+	switch direction {
+	case 0:
+		b.WriteString("\n\nhuobi SELL, upbit BUY\n\n")
+		upbitAsk := "upbit ASK price: " + ac.FormatMoney(upbit.askPrice) + "\n"
+		huobiBid := "huobi BID price: " + ac.FormatMoney(huobi.bidPrice) + "\n"
+		b.WriteString(upbitAsk)
+		b.WriteString(huobiBid)
+		diff := huobi.bidPrice - upbit.askPrice
+		diffString := "Practical Spread: " + ac.FormatMoney(diff) + "\n"
+		b.WriteString(diffString)
+		shouldSend = diff > 8000 && huobi.bidVolume > 0.01
+	case 1:
+		b.WriteString("\n\nupbit SELL, huobi BUY\n\n")
+		huobiAsk := "huobi ASK price: " + ac.FormatMoney(huobi.askPrice) + "\n"
+		upbitBid := "upbit BID price: " + ac.FormatMoney(upbit.bidPrice) + "\n"
+		b.WriteString(huobiAsk)
+		b.WriteString(upbitBid)
+		diff := upbit.bidPrice - huobi.askPrice
+		diffString := "Practical Spread: " + ac.FormatMoney(diff) + "\n"
+		b.WriteString(diffString)
+		shouldSend = diff > 8000 && huobi.askVolume > 0.01
+	}
+	return TickerMessage{
+		messageString: b.String(),
+		shouldSend:    shouldSend,
 	}
 }
