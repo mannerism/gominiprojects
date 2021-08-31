@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -18,7 +19,11 @@ type requestResult struct {
 }
 
 func main() {
-	doEvery(5*time.Second, startTicker)
+	fmt.Println("Start Inbastards")
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		doEvery(5*time.Second, startTicker)
+	})
+	log.Fatal(http.ListenAndServe(":8081", nil))
 }
 
 func doEvery(d time.Duration, f func()) {
