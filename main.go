@@ -18,8 +18,7 @@ type requestResult struct {
 }
 
 func main() {
-	//	doEvery(5*time.Second, startTicker)
-	bithumbETHPrice()
+	doEvery(5*time.Second, startTicker)
 }
 
 func doEvery(d time.Duration, f func()) {
@@ -30,23 +29,23 @@ func doEvery(d time.Duration, f func()) {
 
 func startTicker() {
 	results := make(map[string]requestResult)
-
 	exchanges := []string{
 		"upbit",
-		"huobikr",
+		// "huobikr",
+		"bithumb",
 	}
 
 	c := make(chan requestResult)
 
 	go upbitETHPrice(c)
-	go huobiETHPrice(c)
+	// go huobiETHPrice(c)
+	go bithumbETHPrice(c)
 
 	for i := 0; i < len(exchanges); i++ {
 		result := <-c
 		results[result.exchange] = result
 	}
 	priceChecker(results)
-
 }
 
 func GetData(url string) ([]byte, error) {

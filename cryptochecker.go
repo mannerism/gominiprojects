@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/leekchan/accounting"
@@ -70,6 +71,7 @@ type BithumbResponse struct {
 		PaymentCurrency string       `json:payment_currency`
 		OrderCurrency   string       `json:order_currency`
 		Bids            []BithumbBid `json:"bids"`
+		Asks						[]BithumbBid `json:"asks`
 	} `json:"data"`
 }
 
@@ -129,16 +131,38 @@ func huobiETHPrice(c chan requestResult) {
 	}
 }
 
-func bithumbETHPrice() {
+func bithumbETHPrice(c chan requestResult) {
 	response, err := GetData("https://api.bithumb.com/public/orderbook/ETH_KRW")
 	if err != nil {
 		fmt.Println(err.Error())
 		fmt.Println("Error in bithumbethprice")
 	}
-
 	var decoded BithumbResponse
 	json.Unmarshal(response, &decoded)
-	fmt.Println(decoded)
+	if len(decoded.Data.Bids) == 0 ||
+		 len(decoded.Data.Asks) == 0 {
+			c <- requestResult{
+				 exchange: "bithumb",
+				 tradePrice: -1,
+				 askPrice:   -1,
+				 askVolume:  -1,
+				 bidPrice:   -1,
+				 bidVolume:  -1,
+			 }
+		 } else {
+			 f1, _ := strconv.ParseFloat(decoded.Data.Asks[0].Price, 64)
+			 f2, _ := strconv.ParseFloat(decoded.Data.Asks[0].Quantity, 64)
+			 f3, _ := strconv.ParseFloat(decoded.Data.Bids[0].Price, 64)
+			 f4, _ := strconv.ParseFloat(decoded.Data.Bids[0].Quantity, 64)
+			 c <- requestResult{
+				exchange:   "bithumb",
+				tradePrice: f1,
+				askPrice:   f1,
+				askVolume:  f2,
+				bidPrice:   f3,
+				bidVolume:  f4,
+			}
+		 }
 }
 
 type Comparison struct {
@@ -153,33 +177,33 @@ type TickerMessage struct {
 }
 
 func priceChecker(val map[string]requestResult) {
+	bithumb := val["bithumb"]
 	upbit := val["upbit"]
-	huobi := val["huobikr"]
-	diff := getDiffPercent(upbit, huobi)
+	// huobi := val["huobikr"]
+
+	diff := getDiffPercent(upbit, bithumb)
 	var result TickerMessage
 
 	if diff.actualPercent < 0 {
 		// huobi sell, upbit buy
-		result = generateTickerMessage(0, upbit, huobi, diff)
+		result = generateTickerMessage(0, upbit, bithumb, diff)
 	} else {
 		// upbit sell, huobi buy
-		result = generateTickerMessage(1, upbit, huobi, diff)
+		result = generateTickerMessage(1, upbit, bithumb, diff)
 	}
-
-	fmt.Println(result.messageString)
 
 	if result.shouldSend {
 		go sendTextToTelegramChat(1967491369, result.messageString)
-		go sendTextToTelegramChat(303250131, result.messageString)
+		// go sendTextToTelegramChat(303250131, result.messageString)
 	} else {
 		fmt.Println("it's okay to chill")
 	}
 }
 
-func getDiffPercent(upbit requestResult, huobi requestResult) Comparison {
-	percentDiff := (upbit.tradePrice - huobi.tradePrice) / upbit.tradePrice * 100
+func getDiffPercent(upbit requestResult, bithumb requestResult) Comparison {
+	percentDiff := (upbit.tradePrice - bithumb.tradePrice) / upbit.tradePrice * 100
 	absPercent := math.Abs(percentDiff)
-	absAmount := math.Abs(upbit.tradePrice - huobi.tradePrice)
+	absAmount := math.Abs(upbit.tradePrice - bithumb.tradePrice)
 
 	return Comparison{
 		actualPercent:   percentDiff,
@@ -191,13 +215,13 @@ func getDiffPercent(upbit requestResult, huobi requestResult) Comparison {
 func generateTickerMessage(
 	direction int,
 	upbit requestResult,
-	huobi requestResult,
+	bithumb requestResult,
 	diff Comparison) TickerMessage {
 
 	// if requestResult has negative value: huobi array is empty, therefore prone to null pointer exception
-	if huobi.tradePrice == -1 {
+	if bithumb.tradePrice == -1 {
 		return TickerMessage{
-			messageString: "Error: huobi API sucks dick",
+			messageString: "Error: bithumb API sucks dick",
 			shouldSend:    false,
 		}
 	}
@@ -207,7 +231,7 @@ func generateTickerMessage(
 	ac := accounting.Accounting{Symbol: "₩", Precision: 0}
 	timeStamp := time.Now()
 	upbitPriceString := "upbit eth price: " + ac.FormatMoney(upbit.tradePrice) + "\n"
-	huobiPriceString := "huobi eth price: " + ac.FormatMoney(huobi.tradePrice) + "\n"
+	bithumbPriceString := "bithumb eth price: " + ac.FormatMoney(bithumb.tradePrice) + "\n"
 	priceDiffString := "diff: " + ac.FormatMoney(diff.absoluteAmount) + "\n"
 	percentDiffString := fmt.Sprintf("%f", math.Round(diff.absolutePercent*100)/100) + "%" + "\n"
 
@@ -215,31 +239,31 @@ func generateTickerMessage(
 	b.WriteString("\n----------------------------------\n")
 	b.WriteString(timeStamp.String() + "\n\n")
 	b.WriteString(upbitPriceString)
-	b.WriteString(huobiPriceString)
+	b.WriteString(bithumbPriceString)
 	b.WriteString(priceDiffString)
 	b.WriteString(percentDiffString)
 
 	switch direction {
 	case 0:
-		b.WriteString("\n\nhuobi SELL, upbit BUY\n\n")
+		b.WriteString("\n\nbithumb SELL, upbit BUY\n\n")
 		upbitAsk := "upbit ASK price: " + ac.FormatMoney(upbit.askPrice) + "\n"
-		huobiBid := "huobi BID price: " + ac.FormatMoney(huobi.bidPrice) + "\n"
+		huobiBid := "bithumb BID price: " + ac.FormatMoney(bithumb.bidPrice) + "\n"
 		b.WriteString(upbitAsk)
 		b.WriteString(huobiBid)
-		diff := huobi.bidPrice - upbit.askPrice
+		diff := bithumb.bidPrice - upbit.askPrice
 		diffString := "Practical Spread: " + ac.FormatMoney(diff) + "\n"
 		b.WriteString(diffString)
-		shouldSend = diff > 12000 && huobi.bidVolume > 0.01
+		shouldSend = diff > 20000 && bithumb.bidVolume > 0.01
 	case 1:
-		b.WriteString("\n\nupbit SELL, huobi BUY\n\n")
-		huobiAsk := "huobi ASK price: " + ac.FormatMoney(huobi.askPrice) + "\n"
+		b.WriteString("\n\nupbit SELL, bithumb BUY\n\n")
+		huobiAsk := "bithumb ASK price: " + ac.FormatMoney(bithumb.askPrice) + "\n"
 		upbitBid := "upbit BID price: " + ac.FormatMoney(upbit.bidPrice) + "\n"
 		b.WriteString(huobiAsk)
 		b.WriteString(upbitBid)
-		diff := upbit.bidPrice - huobi.askPrice
+		diff := upbit.bidPrice - bithumb.askPrice
 		diffString := "Practical Spread: " + ac.FormatMoney(diff) + "\n"
 		b.WriteString(diffString)
-		shouldSend = diff > 20000 && huobi.askVolume > 0.01
+		shouldSend = diff > 20000 && bithumb.askVolume > 0.01
 	}
 	return TickerMessage{
 		messageString: b.String(),
