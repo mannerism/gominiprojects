@@ -58,6 +58,21 @@ type HuobiResponse struct {
 	} `json:"tick"`
 }
 
+type BithumbBid struct {
+	Price    string `json:"price"`
+	Quantity string `json:"quantity"`
+}
+
+type BithumbResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		Timestamp       string       `json:timestamp`
+		PaymentCurrency string       `json:payment_currency`
+		OrderCurrency   string       `json:order_currency`
+		Bids            []BithumbBid `json:"bids"`
+	} `json:"data"`
+}
+
 func upbitETHPrice(c chan requestResult) {
 	response, err := GetData("https://api.upbit.com/v1/ticker?markets=KRW-ETH")
 
@@ -90,15 +105,40 @@ func huobiETHPrice(c chan requestResult) {
 
 	var decoded HuobiResponse
 	json.Unmarshal(response, &decoded)
-
-	c <- requestResult{
-		exchange:   "huobikr",
-		tradePrice: decoded.Tick.Close,
-		askPrice:   decoded.Tick.Ask[0],
-		askVolume:  decoded.Tick.Ask[1],
-		bidPrice:   decoded.Tick.Bid[0],
-		bidVolume:  decoded.Tick.Bid[1],
+	if len(decoded.Tick.Ask) == 0 ||
+		len(decoded.Tick.Ask) == 0 ||
+		len(decoded.Tick.Bid) == 0 ||
+		len(decoded.Tick.Bid) == 0 {
+		c <- requestResult{
+			exchange:   "huobikr",
+			tradePrice: -1,
+			askPrice:   -1,
+			askVolume:  -1,
+			bidPrice:   -1,
+			bidVolume:  -1,
+		}
+	} else {
+		c <- requestResult{
+			exchange:   "huobikr",
+			tradePrice: decoded.Tick.Close,
+			askPrice:   decoded.Tick.Ask[0],
+			askVolume:  decoded.Tick.Ask[1],
+			bidPrice:   decoded.Tick.Bid[0],
+			bidVolume:  decoded.Tick.Bid[1],
+		}
 	}
+}
+
+func bithumbETHPrice() {
+	response, err := GetData("https://api.bithumb.com/public/orderbook/ETH_KRW")
+	if err != nil {
+		fmt.Println(err.Error())
+		fmt.Println("Error in bithumbethprice")
+	}
+
+	var decoded BithumbResponse
+	json.Unmarshal(response, &decoded)
+	fmt.Println(decoded)
 }
 
 type Comparison struct {
@@ -154,6 +194,14 @@ func generateTickerMessage(
 	huobi requestResult,
 	diff Comparison) TickerMessage {
 
+	// if requestResult has negative value: huobi array is empty, therefore prone to null pointer exception
+	if huobi.tradePrice == -1 {
+		return TickerMessage{
+			messageString: "Error: huobi API sucks dick",
+			shouldSend:    false,
+		}
+	}
+
 	var b bytes.Buffer
 	var shouldSend bool
 	ac := accounting.Accounting{Symbol: "₩", Precision: 0}
@@ -181,7 +229,7 @@ func generateTickerMessage(
 		diff := huobi.bidPrice - upbit.askPrice
 		diffString := "Practical Spread: " + ac.FormatMoney(diff) + "\n"
 		b.WriteString(diffString)
-		shouldSend = diff > 8000 && huobi.bidVolume > 0.01
+		shouldSend = diff > 12000 && huobi.bidVolume > 0.01
 	case 1:
 		b.WriteString("\n\nupbit SELL, huobi BUY\n\n")
 		huobiAsk := "huobi ASK price: " + ac.FormatMoney(huobi.askPrice) + "\n"
@@ -191,7 +239,7 @@ func generateTickerMessage(
 		diff := upbit.bidPrice - huobi.askPrice
 		diffString := "Practical Spread: " + ac.FormatMoney(diff) + "\n"
 		b.WriteString(diffString)
-		shouldSend = diff > 8000 && huobi.askVolume > 0.01
+		shouldSend = diff > 20000 && huobi.askVolume > 0.01
 	}
 	return TickerMessage{
 		messageString: b.String(),

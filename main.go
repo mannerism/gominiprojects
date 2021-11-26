@@ -18,7 +18,8 @@ type requestResult struct {
 }
 
 func main() {
-	doEvery(5*time.Second, startTicker)
+	//	doEvery(5*time.Second, startTicker)
+	bithumbETHPrice()
 }
 
 func doEvery(d time.Duration, f func()) {
